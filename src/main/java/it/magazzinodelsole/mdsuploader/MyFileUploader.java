@@ -1,9 +1,11 @@
 package it.magazzinodelsole.mdsuploader;
 
-import javax.net.ssl.HttpsURLConnection;
+import org.apache.http.entity.mime.MultipartEntity;
+import org.apache.http.entity.mime.content.FileBody;
 import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
 import java.net.URL;
 
 public class MyFileUploader {
@@ -11,7 +13,7 @@ public class MyFileUploader {
     /**
      * URL to call to upload the fle
      */
-    private final URL url;
+    private final String url;
 
     /**
      * Shared (between this client and the serial) use for the challenge response
@@ -23,7 +25,7 @@ public class MyFileUploader {
      * @param url URL to call to upload the file
      * @param sharedKey Shared key for the challenge response
      */
-    public MyFileUploader (URL url, String sharedKey) {
+    public MyFileUploader (String url, String sharedKey) {
 
         this.url = url;
         this.sharedKey = sharedKey;
@@ -38,32 +40,53 @@ public class MyFileUploader {
     public void uploadFile (File fileToUpload) throws IOException, ChallengeFailedException {
 
         // Open the connection
-        HttpsURLConnection conn = (HttpsURLConnection) url.openConnection();
+        HttpURLConnection conn = (HttpURLConnection) new URL(createAuthorizedUrl()).openConnection();
 
-        // Prepare the connection
-        conn.setDoInput(true);
-        conn.setDoOutput(true);
+        // Create the multipart
+        MultipartEntity multipartEntity = new MultipartEntity();
 
-        // Set the header for the multi part request
-        conn.setRequestProperty("ENCTYPE", "multipart/form-data");
-        //conn.setRequestProperty("Content-Type", "multipart/form-data;boundary=" + BOUNDARY);
+        // Create the file body from the file to upload
+        FileBody fileBody = new FileBody(fileToUpload);
+
+        // Add the file
+        multipartEntity.addPart("risultati", fileBody);
+
+        // Set the content type
+        conn.setRequestProperty("Content-Type", multipartEntity.getContentType().getValue());
 
         // Get the output stream
         OutputStream toServer = conn.getOutputStream();
 
+        // Write the multipart
+        multipartEntity.writeTo(toServer);
+
         // Flush and close the stream
         toServer.close();
 
-        // Get the response from the server
+        // Get the response
         int response = conn.getResponseCode();
 
         if (response != 200)
             throw new ChallengeFailedException();
-
-        // Close the connection
-        conn.disconnect();
     }
 
-    public static Class ChallengeFailedException extends Exception { }
+    public static class ChallengeFailedException extends Exception {
 
+    }
+
+    private String createAuthorizedUrl () {
+
+        // Generate a new random string
+        String random = Utils.generateRandomString();
+
+        // Calculate the resulting key
+        String resultKey = Utils.SHA1(random + sharedKey);
+
+        return new StringBuilder().append(url)
+                .append("?random=")
+                .append(random)
+                .append("&result")
+                .append(resultKey)
+                .toString();
+    }
 }

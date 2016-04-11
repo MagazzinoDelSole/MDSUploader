@@ -72,7 +72,7 @@ public class Main {
             serial = MySerial.open(config.getProperty("serialPort"));
 
             // Prepare the uploader
-            uploader = new MyFileUploader("", "");
+            uploader = new MyFileUploader(config.getProperty("uploadUrl"), config.getProperty("sharedKey"));
 
             // Set the listener for the incoming data
             serial.setListener(new MySerial.DataListener() {
@@ -90,6 +90,9 @@ public class Main {
                     } catch (IOException ex) {
 
                         log.warn(ex);
+                    } catch (MyFileUploader.ChallengeFailedException e) {
+
+                        log.warn(e);
                     }
                 }
             });
@@ -105,6 +108,9 @@ public class Main {
         } catch (PortInUseException e) {
 
             log.fatal("Serial port already in use", e);
+        } catch (IOException e) {
+
+            log.fatal(e);
         }
     }
 

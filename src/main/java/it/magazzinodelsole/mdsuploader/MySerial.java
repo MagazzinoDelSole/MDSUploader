@@ -8,14 +8,14 @@ import org.apache.log4j.Logger;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InterruptedIOException;
 import java.util.Enumeration;
+import java.util.LinkedList;
 import java.util.concurrent.CountDownLatch;
 
 public class MySerial extends Thread {
 
     /**
-     * Logger
+     * Logger of the class
      */
     private static final Logger log = Logger.getLogger(MySerial.class);
 
@@ -29,6 +29,10 @@ public class MySerial extends Thread {
      */
     public static final int DEFAULT_INTERVAL = 2000;
 
+    private static final int READING_TITLE = 1;
+
+    private static final int READING_DATA = 2;
+
     /**
      * Open the specified serial port
      * @param name Name of the serial port
@@ -37,7 +41,7 @@ public class MySerial extends Thread {
      * @throws PortInUseException thrown if the specified port is already in use
      * @throws UnsupportedCommOperationException thrown if the port doesn't support the default configuration
      */
-    public static MySerial open (String name) throws SerialPortNotFoundException, PortInUseException, UnsupportedCommOperationException {
+    public static MySerial open (String name) throws SerialPortNotFoundException, PortInUseException, UnsupportedCommOperationException, IOException {
 
         // Get the available ports
         Enumeration ports = CommPortIdentifier.getPortIdentifiers();
@@ -63,6 +67,7 @@ public class MySerial extends Thread {
                 MySerial mySerial = new MySerial(serial);
             }
         }
+
         throw new SerialPortNotFoundException(name);
     }
 
@@ -96,10 +101,10 @@ public class MySerial extends Thread {
     /**
      * Raw serial object from the rxtx library
      */
-    private SerialPort rawPort;
+    private final SerialPort rawPort;
 
     /**
-     * Listener to call when data is retrived from the serial
+     * Listener to call when data is retrieved from the serial
      */
     private DataListener listener;
 
@@ -112,9 +117,16 @@ public class MySerial extends Thread {
 
     private CountDownLatch countDownLatch;
 
-    private MySerial (SerialPort rawPort) {
+    /**
+     * Create a new MySerial from the serial specified.
+     * @param rawPort
+     * @throws IOException Thrown while getting the input stream from the serial
+     */
+    private MySerial (SerialPort rawPort) throws IOException {
 
         this.rawPort = rawPort;
+
+        // Get the input stream
         this.fromSerial = rawPort.getInputStream();
     }
 
@@ -142,7 +154,14 @@ public class MySerial extends Thread {
         // Prepare the buffer from the serial
         byte[] buffer = new byte[255];
 
-        int state;
+        // String builder for the title
+        StringBuilder titleBuilder = new StringBuilder();
+
+        // Array list for the temporary data
+        LinkedList<Byte> data = new LinkedList<>();
+
+        // Reading state
+        int state = -1;
 
         while (!shutdown) {
 
@@ -155,8 +174,58 @@ public class MySerial extends Thread {
                     int read = fromSerial.read(buffer);
 
                     // Iterate each byte
-                    for(byte b : read) {
+                    for (int i = 0;i < read; i++) {
 
+                        switch (buffer[i]) {
+
+                            case 'd': // Title of the data
+
+                                // clear the builder
+                                titleBuilder.delete(0, titleBuilder.length());
+
+                                // Change the state
+                                state = READING_TITLE;
+                                break;
+                            case 'n': // New line
+
+                                // Append /n to the data
+                                titleBuilder.append("/n");
+                                break;
+                            case 'i': // Start the data
+
+                                // Clear the array of the data
+                                data.clear();
+
+                                // Change the state
+                                state = READING_DATA;
+                                break;
+                            case 'f': // End
+
+                                // Build the title
+                                String title = titleBuilder.toString();
+
+                                // Transform the data into a new array
+                                byte[] dataArray = new byte[data.size()];
+
+                                // Copy all the byte
+                                int j = 0;
+                                for(Byte b : data)
+                                        dataArray[j++] = b;
+
+                                // Call the listener
+                                listener.onData(title, dataArray);
+                                break;
+                            default:
+                                if (state == READING_TITLE) {
+
+                                    // add the character to the title
+                                    titleBuilder.append(buffer[i]);
+                                } else {
+
+                                    // Add the byte to the data
+                                    data.add(buffer[i]);
+                                }
+                        }
                     }
 
                 } else {
@@ -170,7 +239,7 @@ public class MySerial extends Thread {
             } catch (InterruptedException ex) {
 
                 // Who cares
-                log.log(ex);
+                log.warn(ex);
             }
         }
 
@@ -188,7 +257,7 @@ public class MySerial extends Thread {
         if(!shutdown)
             throw new IllegalStateException("The listener is not running");
 
-        // Chjange the flag
+        // Change the flag
         shutdown = true;
 
         // Wait for the end of the thread
@@ -198,7 +267,7 @@ public class MySerial extends Thread {
     /**
      * Interface of the data listener
      */
-    public static interface DataListener {
+    public interface DataListener {
 
         /**
          * Method called when the data is received from the serial
@@ -206,5 +275,16 @@ public class MySerial extends Thread {
          * @param data Bytes of data
          */
         void onData (String dataTitle, byte[] data);
+    }
+
+    /**
+     * Release the serial port
+     */
+    public void release () {
+
+        if(!shutdown)
+            throw new IllegalStateException("Reading thread is running");
+
+        rawPort.close();
     }
 }
